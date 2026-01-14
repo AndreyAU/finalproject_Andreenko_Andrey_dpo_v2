@@ -1,0 +1,13 @@
+[tool.poetry]
+name = "finalproject_Andreenko_Andrey_dpo_v2"
+version = "0.1.0"
+description = "Project simulating currency wallet"
+authors = ["Your Name <youremail@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+prettytable = "^3.0"
+ruff = "^0.0.243"  # или последняя версия, проверь на PyPI
+
+[tool.poetry.dev-dependencies]
+
