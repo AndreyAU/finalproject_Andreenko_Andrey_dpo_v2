@@ -1,9 +1,27 @@
+# virtual environments
 .venv/
+venv/
+
+# python cache
 __pycache__/
+*.py[cod]
+
+# build artifacts
 dist/
 build/
-*.pyc
-*.pyo
+*.egg-info/
+
+# logs and temp files
 *.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# runtime session file
 data/current_user.json
 
