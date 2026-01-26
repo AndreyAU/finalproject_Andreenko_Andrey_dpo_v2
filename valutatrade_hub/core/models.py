@@ -25,8 +25,6 @@ class User:
         self._salt = salt
         self._registration_date = registration_date or datetime.now()
 
-    # ---------- static helpers ----------
-
     @staticmethod
     def generate_salt() -> str:
         return secrets.token_hex(16)
@@ -36,8 +34,6 @@ class User:
         if not isinstance(password, str) or len(password) < 4:
             raise ValueError("Пароль должен быть не короче 4 символов")
         return hashlib.sha256((password + salt).encode()).hexdigest()
-
-    # ---------- business methods ----------
 
     def verify_password(self, password: str) -> bool:
         return self._hashed_password == self.hash_password(password, self._salt)
@@ -53,8 +49,6 @@ class User:
             "username": self._username,
             "registration_date": self._registration_date.isoformat()
         }
-
-    # ---------- getters ----------
 
     @property
     def user_id(self) -> int:
@@ -87,9 +81,7 @@ class Wallet:
             raise ValueError("Код валюты не может быть пустым")
 
         self.currency_code = currency_code.upper()
-        self.balance = balance  # через setter
-
-    # ---------- balance property ----------
+        self.balance = balance
 
     @property
     def balance(self) -> float:
@@ -102,8 +94,6 @@ class Wallet:
         if value < 0:
             raise ValueError("Баланс не может быть отрицательным")
         self._balance = float(value)
-
-    # ---------- business methods ----------
 
     def deposit(self, amount: float) -> None:
         if not isinstance(amount, (int, float)) or amount <= 0:
@@ -121,4 +111,72 @@ class Wallet:
 
     def get_balance_info(self) -> str:
         return f"{self.currency_code}: {self._balance:.4f}"
+
+
+# =========================
+# Portfolio
+# =========================
+
+class Portfolio:
+    # Заглушка курсов (разрешено ТЗ)
+    EXCHANGE_RATES = {
+        "USD": 1.0,
+        "EUR": 1.08,
+        "BTC": 59000.0,
+        "ETH": 3700.0
+    }
+
+    def __init__(self, user_id: int, wallets: dict[str, Wallet] | None = None):
+        self._user_id = user_id
+        self._wallets: dict[str, Wallet] = wallets or {}
+
+    # ---------- getters ----------
+
+    @property
+    def user(self) -> int:
+        return self._user_id
+
+    @property
+    def wallets(self) -> dict[str, Wallet]:
+        # возвращаем КОПИЮ
+        return dict(self._wallets)
+
+    # ---------- business methods ----------
+
+    def add_currency(self, currency_code: str) -> Wallet:
+        if not currency_code or not currency_code.strip():
+            raise ValueError("Код валюты не может быть пустым")
+
+        code = currency_code.upper()
+
+        if code in self._wallets:
+            raise ValueError(f"Кошелёк {code} уже существует")
+
+        wallet = Wallet(code)
+        self._wallets[code] = wallet
+        return wallet
+
+    def get_wallet(self, currency_code: str) -> Wallet | None:
+        return self._wallets.get(currency_code.upper())
+
+    def get_total_value(self, base_currency: str = "USD") -> float:
+        base = base_currency.upper()
+
+        if base not in self.EXCHANGE_RATES:
+            raise ValueError(f"Неизвестная базовая валюта {base}")
+
+        total = 0.0
+
+        for code, wallet in self._wallets.items():
+            if code not in self.EXCHANGE_RATES:
+                continue
+
+            value_in_usd = wallet.balance * self.EXCHANGE_RATES[code]
+            total += value_in_usd
+
+        # если база не USD — пересчитываем
+        if base != "USD":
+            total /= self.EXCHANGE_RATES[base]
+
+        return round(total, 2)
 
