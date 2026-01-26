@@ -3,6 +3,10 @@ import secrets
 from datetime import datetime
 
 
+# =========================
+# User
+# =========================
+
 class User:
     def __init__(
         self,
@@ -29,7 +33,7 @@ class User:
 
     @staticmethod
     def hash_password(password: str, salt: str) -> str:
-        if len(password) < 4:
+        if not isinstance(password, str) or len(password) < 4:
             raise ValueError("Пароль должен быть не короче 4 символов")
         return hashlib.sha256((password + salt).encode()).hexdigest()
 
@@ -39,7 +43,7 @@ class User:
         return self._hashed_password == self.hash_password(password, self._salt)
 
     def change_password(self, new_password: str) -> None:
-        if len(new_password) < 4:
+        if not isinstance(new_password, str) or len(new_password) < 4:
             raise ValueError("Пароль должен быть не короче 4 символов")
         self._hashed_password = self.hash_password(new_password, self._salt)
 
@@ -71,4 +75,50 @@ class User:
     @property
     def registration_date(self) -> datetime:
         return self._registration_date
+
+
+# =========================
+# Wallet
+# =========================
+
+class Wallet:
+    def __init__(self, currency_code: str, balance: float = 0.0):
+        if not currency_code or not currency_code.strip():
+            raise ValueError("Код валюты не может быть пустым")
+
+        self.currency_code = currency_code.upper()
+        self.balance = balance  # через setter
+
+    # ---------- balance property ----------
+
+    @property
+    def balance(self) -> float:
+        return self._balance
+
+    @balance.setter
+    def balance(self, value: float) -> None:
+        if not isinstance(value, (int, float)):
+            raise ValueError("Баланс должен быть числом")
+        if value < 0:
+            raise ValueError("Баланс не может быть отрицательным")
+        self._balance = float(value)
+
+    # ---------- business methods ----------
+
+    def deposit(self, amount: float) -> None:
+        if not isinstance(amount, (int, float)) or amount <= 0:
+            raise ValueError("Сумма пополнения должна быть положительным числом")
+        self._balance += float(amount)
+
+    def withdraw(self, amount: float) -> None:
+        if not isinstance(amount, (int, float)) or amount <= 0:
+            raise ValueError("Сумма снятия должна быть положительным числом")
+        if amount > self._balance:
+            raise ValueError(
+                f"Недостаточно средств: доступно {self._balance}, требуется {amount}"
+            )
+        self._balance -= float(amount)
+
+    def get_balance_info(self) -> str:
+        return f"{self.currency_code}: {self._balance:.4f}"
 
