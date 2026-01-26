@@ -35,12 +35,19 @@ def _get_current_user():
     return data  # {user_id, username}
 
 
-def _get_user_portfolio(user_id: int):
-    portfolios = _load_json(PORTFOLIOS_FILE) or []
-    for p in portfolios:
-        if p["user_id"] == user_id:
-            return p
-    raise RuntimeError("Портфель пользователя не найден")
+def _load_rates():
+    data = _load_json(RATES_FILE)
+    if not data:
+        raise RuntimeError("Курсы валют недоступны")
+    return data
+
+
+def _get_rate(from_currency: str, to_currency: str) -> float:
+    rates = _load_rates()
+    key = f"{from_currency}_{to_currency}"
+    if key not in rates:
+        raise RuntimeError(f"Не удалось получить курс для {from_currency}→{to_currency}")
+    return rates[key]["rate"]
 
 
 # =========================
@@ -63,15 +70,14 @@ def register_user(username: str, password: str) -> dict:
     salt = User.generate_salt()
     hashed_password = User.hash_password(password, salt)
 
-    new_user = {
+    users.append({
         "user_id": user_id,
         "username": username,
         "hashed_password": hashed_password,
         "salt": salt,
         "registration_date": datetime.now().isoformat()
-    }
+    })
 
-    users.append(new_user)
     _save_json(USERS_FILE, users)
 
     portfolios = _load_json(PORTFOLIOS_FILE) or []
@@ -81,10 +87,7 @@ def register_user(username: str, password: str) -> dict:
     })
     _save_json(PORTFOLIOS_FILE, portfolios)
 
-    return {
-        "user_id": user_id,
-        "username": username
-    }
+    return {"user_id": user_id, "username": username}
 
 
 def login_user(username: str, password: str) -> dict:
@@ -115,37 +118,78 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
+# buy currency
+# =========================
+
+def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
+    current_user = _get_current_user()
+    user_id = current_user["user_id"]
+
+    if not currency or not isinstance(currency, str):
+        raise ValueError("Некорректный код валюты")
+
+    if not isinstance(amount, (int, float)) or amount <= 0:
+        raise ValueError("'amount' должен быть положительным числом")
+
+    currency = currency.upper()
+    base_currency = base_currency.upper()
+
+    rate = _get_rate(currency, base_currency)
+
+    # 🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ
+    portfolios = _load_json(PORTFOLIOS_FILE) or []
+
+    portfolio = next(
+        (p for p in portfolios if p["user_id"] == user_id),
+        None
+    )
+    if not portfolio:
+        raise RuntimeError("Портфель пользователя не найден")
+
+    wallets = portfolio.setdefault("wallets", {})
+
+    if currency not in wallets:
+        wallets[currency] = {"balance": 0.0}
+
+    before = wallets[currency]["balance"]
+    after = before + float(amount)
+    wallets[currency]["balance"] = after
+
+    _save_json(PORTFOLIOS_FILE, portfolios)
+
+    return {
+        "currency": currency,
+        "amount": amount,
+        "rate": rate,
+        "base": base_currency,
+        "before": before,
+        "after": after,
+        "cost": round(amount * rate, 2)
+    }
+
+
+# =========================
 # show portfolio
 # =========================
 
 def show_portfolio(base_currency: str = "USD") -> dict:
-    """
-    Возвращает структуру данных для отображения портфеля пользователя
-    """
-
     base_currency = base_currency.upper()
 
-    # 1. Проверка логина
     current_user = _get_current_user()
     user_id = current_user["user_id"]
     username = current_user["username"]
 
-    # 2. Загрузка портфеля
-    portfolio_data = _get_user_portfolio(user_id)
-    wallets_data = portfolio_data.get("wallets", {})
+    portfolios = _load_json(PORTFOLIOS_FILE) or []
+    portfolio = next(
+        (p for p in portfolios if p["user_id"] == user_id),
+        None
+    )
+    if not portfolio:
+        raise RuntimeError("Портфель пользователя не найден")
 
-    # 3. Курсы (заглушка по ТЗ)
-    exchange_rates = {
-        "USD_USD": 1.0,
-        "BTC_USD": 59300.0,
-        "EUR_USD": 1.07
-    }
+    wallets = portfolio.get("wallets", {})
 
-    result_wallets = []
-    total_value = 0.0
-
-    # 4. Пустой портфель
-    if not wallets_data:
+    if not wallets:
         return {
             "username": username,
             "base": base_currency,
@@ -153,27 +197,25 @@ def show_portfolio(base_currency: str = "USD") -> dict:
             "total": 0.0
         }
 
-    # 5. Подсчёт стоимости
-    for currency, info in wallets_data.items():
-        balance = info.get("balance", 0.0)
+    result_wallets = []
+    total = 0.0
 
-        rate_key = f"{currency}_{base_currency}"
-        if rate_key not in exchange_rates:
-            raise RuntimeError(f"Неизвестная валюта '{currency}'")
-
-        value_in_base = balance * exchange_rates[rate_key]
-        total_value += value_in_base
+    for currency, info in wallets.items():
+        balance = info["balance"]
+        rate = _get_rate(currency, base_currency)
+        value = balance * rate
+        total += value
 
         result_wallets.append({
             "currency": currency,
             "balance": balance,
-            "value_in_base": value_in_base
+            "value_in_base": round(value, 2)
         })
 
     return {
         "username": username,
         "base": base_currency,
         "wallets": result_wallets,
-        "total": total_value
+        "total": round(total, 2)
     }
 

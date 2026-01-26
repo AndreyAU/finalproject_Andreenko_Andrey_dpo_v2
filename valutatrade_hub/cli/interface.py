@@ -1,7 +1,8 @@
 from valutatrade_hub.core.usecases import (
     register_user,
     login_user,
-    show_portfolio
+    show_portfolio,
+    buy_currency
 )
 
 
@@ -11,6 +12,7 @@ def print_menu():
     print("1. Регистрация")
     print("2. Вход")
     print("3. Показать портфель")
+    print("4. Купить валюту")
     print("0. Выход")
     print("---------------------------------")
 
@@ -69,6 +71,30 @@ def handle_show_portfolio():
         print(f"\nОшибка: {e}")
 
 
+def handle_buy_currency():
+    print("\nПокупка валюты")
+
+    currency = input("Код валюты (например BTC): ").strip().upper()
+    amount_raw = input("Количество: ").strip()
+
+    try:
+        amount = float(amount_raw)
+        result = buy_currency(currency, amount)
+
+        print(
+            f"\nПокупка выполнена: {result['amount']:.4f} {result['currency']} "
+            f"по курсу {result['rate']:.2f} {result['base']}/{result['currency']}"
+        )
+        print(
+            f"Изменения в портфеле:\n"
+            f"- {result['currency']}: было {result['before']:.4f} → стало {result['after']:.4f}"
+        )
+        print(f"Оценочная стоимость покупки: {result['cost']:.2f} {result['base']}")
+
+    except Exception as e:
+        print(f"\nОшибка покупки: {e}")
+
+
 def main_menu():
     while True:
         print_menu()
@@ -80,6 +106,8 @@ def main_menu():
             handle_login()
         elif choice == "3":
             handle_show_portfolio()
+        elif choice == "4":
+            handle_buy_currency()
         elif choice == "0":
             print("\nДо свидания!")
             break
