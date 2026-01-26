@@ -6,21 +6,15 @@ from valutatrade_hub.core.usecases import (
     show_portfolio,
     buy_currency,
     sell_currency,
+    get_rate,
     CURRENT_USER_FILE,
     _get_current_user
 )
 
-# =========================
-# session reset on start
-# =========================
-
+# сброс сессии при старте
 if Path(CURRENT_USER_FILE).exists():
     Path(CURRENT_USER_FILE).unlink()
 
-
-# =========================
-# helpers
-# =========================
 
 def print_menu():
     print("\nДобро пожаловать в ValutaTrade Hub!")
@@ -30,40 +24,21 @@ def print_menu():
     print("3. Показать портфель")
     print("4. Купить валюту")
     print("5. Продать валюту")
+    print("6. Получить курс валют")
     print("0. Выход")
     print("---------------------------------")
 
 
-def _require_login() -> bool:
+def _require_login():
     try:
         _get_current_user()
-        return True
     except Exception as e:
         print(f"\nОшибка: {e}")
         return False
+    return True
 
-
-def _read_amount() -> float | None:
-    raw = input("Количество: ").strip()
-    try:
-        value = float(raw)
-    except ValueError:
-        print("\nОшибка: 'amount' должен быть числом")
-        return None
-
-    if value <= 0:
-        print("\nОшибка: 'amount' должен быть положительным числом")
-        return None
-
-    return value
-
-
-# =========================
-# handlers
-# =========================
 
 def handle_register():
-    print("\nРегистрация нового пользователя")
     username = input("Введите имя пользователя: ").strip()
     password = input("Введите пароль: ").strip()
 
@@ -75,7 +50,6 @@ def handle_register():
 
 
 def handle_login():
-    print("\nВход в систему")
     username = input("Введите имя пользователя: ").strip()
     password = input("Введите пароль: ").strip()
 
@@ -94,23 +68,17 @@ def handle_show_portfolio():
 
     try:
         r = show_portfolio(base)
-
         print(f"\nПортфель пользователя '{r['username']}' (база: {r['base']}):")
-        print("---------------------------------")
 
         if not r["wallets"]:
             print("Портфель пуст")
             return
 
         for w in r["wallets"]:
-            print(
-                f"- {w['currency']}: {w['balance']:.4f}  → "
-                f"{w['value_in_base']:.2f} {r['base']}"
-            )
+            print(f"- {w['currency']}: {w['balance']:.4f} → {w['value_in_base']:.2f} {r['base']}")
 
         print("---------------------------------")
         print(f"ИТОГО: {r['total']:.2f} {r['base']}")
-
     except Exception as e:
         print(f"\nОшибка: {e}")
 
@@ -119,22 +87,20 @@ def handle_buy():
     if not _require_login():
         return
 
-    print("\nПокупка валюты")
     currency = input("Код валюты (например BTC): ").strip()
-    amount = _read_amount()
-    if amount is None:
-        return
+    amount = input("Количество: ").strip()
 
     try:
+        amount = float(amount)
         r = buy_currency(currency, amount)
-
         print(
             f"\nПокупка выполнена: {r['amount']:.4f} {r['currency']} "
             f"по курсу {r['rate']} {r['base']}/{r['currency']}"
         )
         print(f"- {r['currency']}: было {r['before']:.4f} → стало {r['after']:.4f}")
         print(f"Оценочная стоимость покупки: {r['cost']:.2f} {r['base']}")
-
+    except ValueError:
+        print("\nОшибка: 'amount' должен быть числом")
     except Exception as e:
         print(f"\nОшибка покупки: {e}")
 
@@ -143,29 +109,39 @@ def handle_sell():
     if not _require_login():
         return
 
-    print("\nПродажа валюты")
     currency = input("Код валюты (например BTC): ").strip()
-    amount = _read_amount()
-    if amount is None:
-        return
+    amount = input("Количество: ").strip()
 
     try:
+        amount = float(amount)
         r = sell_currency(currency, amount)
-
         print(
             f"\nПродажа выполнена: {r['amount']:.4f} {r['currency']} "
             f"по курсу {r['rate']} {r['base']}/{r['currency']}"
         )
         print(f"- {r['currency']}: было {r['before']:.4f} → стало {r['after']:.4f}")
         print(f"Оценочная выручка: {r['proceeds']:.2f} {r['base']}")
-
+    except ValueError:
+        print("\nОшибка: 'amount' должен быть числом")
     except Exception as e:
         print(f"\nОшибка продажи: {e}")
 
 
-# =========================
-# main loop
-# =========================
+def handle_get_rate():
+    print("\nПолучение курса валют")
+    from_cur = input("Из валюты (например USD): ").strip()
+    to_cur = input("В валюту (например BTC): ").strip()
+
+    try:
+        r = get_rate(from_cur, to_cur)
+        print(
+            f"\nКурс {r['from']}→{r['to']}: {r['rate']} "
+            f"(обновлено: {r['updated_at']})"
+        )
+        print(f"Обратный курс {r['to']}→{r['from']}: {r['reverse_rate']}")
+    except Exception as e:
+        print(f"\nОшибка: {e}")
+
 
 def main_menu():
     while True:
@@ -182,6 +158,8 @@ def main_menu():
             handle_buy()
         elif choice == "5":
             handle_sell()
+        elif choice == "6":
+            handle_get_rate()
         elif choice == "0":
             print("\nДо свидания!")
             break

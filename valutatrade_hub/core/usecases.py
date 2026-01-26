@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from valutatrade_hub.core.models import User
 
@@ -9,6 +9,8 @@ USERS_FILE = DATA_DIR / "users.json"
 PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
 CURRENT_USER_FILE = DATA_DIR / "current_user.json"
 RATES_FILE = DATA_DIR / "rates.json"
+
+TTL_MINUTES = 5
 
 
 # =========================
@@ -38,9 +40,14 @@ def _validate_currency(code: str) -> str:
     if not code or not isinstance(code, str):
         raise ValueError("Некорректный код валюты")
     code = code.strip().upper()
-    if not code.isalpha() or not code.isascii():
+    if not code.isascii() or not code.isalpha():
         raise ValueError("Некорректный код валюты")
     return code
+
+
+def _is_fresh(ts: str) -> bool:
+    updated = datetime.fromisoformat(ts)
+    return datetime.now() - updated <= timedelta(minutes=TTL_MINUTES)
 
 
 def _load_rates():
@@ -50,12 +57,23 @@ def _load_rates():
     return data
 
 
-def _get_rate(from_currency: str, to_currency: str) -> float:
-    rates = _load_rates()
+# ====== Parser Service STUB (по ТЗ) ======
+
+def _parser_stub(from_currency: str, to_currency: str):
+    STUB = {
+        "BTC_USD": 59337.21,
+        "EUR_USD": 1.0786,
+        "USD_EUR": 0.9271,
+    }
+
     key = f"{from_currency}_{to_currency}"
-    if key not in rates:
-        raise RuntimeError(f"Не удалось получить курс для {from_currency}→{to_currency}")
-    return rates[key]["rate"]
+    if key not in STUB:
+        return None
+
+    return {
+        "rate": STUB[key],
+        "updated_at": datetime.now().isoformat(timespec="seconds")
+    }
 
 
 def _get_user_portfolio(user_id: int):
@@ -73,7 +91,6 @@ def _get_user_portfolio(user_id: int):
 def register_user(username: str, password: str) -> dict:
     if not username or not username.strip():
         raise ValueError("Имя пользователя не может быть пустым")
-
     if not isinstance(password, str) or len(password) < 4:
         raise ValueError("Пароль должен быть не короче 4 символов")
 
@@ -105,8 +122,8 @@ def register_user(username: str, password: str) -> dict:
 
 def login_user(username: str, password: str) -> dict:
     users = _load_json(USERS_FILE) or []
-
     user_data = next((u for u in users if u["username"] == username), None)
+
     if not user_data:
         raise ValueError(f"Пользователь '{username}' не найден")
 
@@ -127,12 +144,54 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
-# buy currency
+# get-rate (СТРОГО ПО ТЗ)
+# =========================
+
+def get_rate(from_currency: str, to_currency: str) -> dict:
+    from_currency = _validate_currency(from_currency)
+    to_currency = _validate_currency(to_currency)
+
+    rates = _load_rates()
+    key = f"{from_currency}_{to_currency}"
+
+    # 1. Свежий кеш
+    if key in rates and _is_fresh(rates[key]["updated_at"]):
+        rate = rates[key]["rate"]
+        updated = rates[key]["updated_at"]
+
+    # 2. Устарел или отсутствует → Parser Service (заглушка)
+    else:
+        stub = _parser_stub(from_currency, to_currency)
+        if not stub:
+            raise RuntimeError(
+                f"Курс {from_currency}→{to_currency} недоступен. Повторите попытку позже."
+            )
+
+        rates[key] = stub
+        rates["last_refresh"] = stub["updated_at"]
+        _save_json(RATES_FILE, rates)
+
+        rate = stub["rate"]
+        updated = stub["updated_at"]
+
+    reverse_key = f"{to_currency}_{from_currency}"
+    reverse_rate = rates[reverse_key]["rate"] if reverse_key in rates else None
+
+    return {
+        "from": from_currency,
+        "to": to_currency,
+        "rate": rate,
+        "reverse_rate": reverse_rate,
+        "updated_at": updated
+    }
+
+
+# =========================
+# buy / sell
 # =========================
 
 def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
-    current_user = _get_current_user()
-    user_id = current_user["user_id"]
+    user_id = _get_current_user()["user_id"]
 
     currency = _validate_currency(currency)
     base_currency = _validate_currency(base_currency)
@@ -140,18 +199,14 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
     if not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
 
-    rate = _get_rate(currency, base_currency)
+    rate = get_rate(currency, base_currency)["rate"]
 
     portfolio, portfolios = _get_user_portfolio(user_id)
     wallets = portfolio.setdefault("wallets", {})
 
-    if currency not in wallets:
-        wallets[currency] = {"balance": 0.0}
-
-    before = wallets[currency]["balance"]
+    before = wallets.get(currency, {}).get("balance", 0.0)
     after = round(before + amount, 4)
-    wallets[currency]["balance"] = after
-
+    wallets[currency] = {"balance": after}
 
     _save_json(PORTFOLIOS_FILE, portfolios)
 
@@ -166,13 +221,8 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
     }
 
 
-# =========================
-# sell currency
-# =========================
-
 def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
-    current_user = _get_current_user()
-    user_id = current_user["user_id"]
+    user_id = _get_current_user()["user_id"]
 
     currency = _validate_currency(currency)
     base_currency = _validate_currency(base_currency)
@@ -184,18 +234,15 @@ def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> d
     wallets = portfolio.get("wallets", {})
 
     if currency not in wallets:
-        raise RuntimeError(
-            f"У вас нет кошелька '{currency}'. Добавьте валюту: она создаётся автоматически при первой покупке."
-        )
+        raise RuntimeError(f"У вас нет кошелька '{currency}'")
 
     before = wallets[currency]["balance"]
-
     if amount > before:
         raise RuntimeError(
             f"Недостаточно средств: доступно {before:.4f} {currency}, требуется {amount:.4f} {currency}"
         )
 
-    rate = _get_rate(currency, base_currency)
+    rate = get_rate(currency, base_currency)["rate"]
     after = round(before - amount, 4)
     wallets[currency]["balance"] = after
 
@@ -217,41 +264,33 @@ def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> d
 # =========================
 
 def show_portfolio(base_currency: str = "USD") -> dict:
-    current_user = _get_current_user()
-    user_id = current_user["user_id"]
-    username = current_user["username"]
+    user = _get_current_user()
+    user_id = user["user_id"]
 
     base_currency = _validate_currency(base_currency)
 
     portfolio, _ = _get_user_portfolio(user_id)
     wallets = portfolio.get("wallets", {})
 
-    if not wallets:
-        return {
-            "username": username,
-            "base": base_currency,
-            "wallets": [],
-            "total": 0.0
-        }
-
-    result_wallets = []
+    result = []
     total = 0.0
 
     for currency, info in wallets.items():
-        rate = _get_rate(currency, base_currency)
-        value = info["balance"] * rate
+        balance = info["balance"]
+        rate = get_rate(currency, base_currency)["rate"]
+        value = round(balance * rate, 2)
         total += value
 
-        result_wallets.append({
+        result.append({
             "currency": currency,
-            "balance": info["balance"],
-            "value_in_base": round(value, 2)
+            "balance": balance,
+            "value_in_base": value
         })
 
     return {
-        "username": username,
+        "username": user["username"],
         "base": base_currency,
-        "wallets": result_wallets,
+        "wallets": result,
         "total": round(total, 2)
     }
 
