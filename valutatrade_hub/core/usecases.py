@@ -4,7 +4,6 @@ from datetime import datetime
 
 from valutatrade_hub.core.models import User
 
-
 DATA_DIR = Path("data")
 USERS_FILE = DATA_DIR / "users.json"
 PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
@@ -32,7 +31,16 @@ def _get_current_user():
     data = _load_json(CURRENT_USER_FILE)
     if not data:
         raise RuntimeError("Сначала выполните login")
-    return data  # {user_id, username}
+    return data
+
+
+def _validate_currency(code: str) -> str:
+    if not code or not isinstance(code, str):
+        raise ValueError("Некорректный код валюты")
+    code = code.strip().upper()
+    if not code.isalpha() or not code.isascii():
+        raise ValueError("Некорректный код валюты")
+    return code
 
 
 def _load_rates():
@@ -48,6 +56,14 @@ def _get_rate(from_currency: str, to_currency: str) -> float:
     if key not in rates:
         raise RuntimeError(f"Не удалось получить курс для {from_currency}→{to_currency}")
     return rates[key]["rate"]
+
+
+def _get_user_portfolio(user_id: int):
+    portfolios = _load_json(PORTFOLIOS_FILE) or []
+    for p in portfolios:
+        if p["user_id"] == user_id:
+            return p, portfolios
+    raise RuntimeError("Портфель пользователя не найден")
 
 
 # =========================
@@ -81,10 +97,7 @@ def register_user(username: str, password: str) -> dict:
     _save_json(USERS_FILE, users)
 
     portfolios = _load_json(PORTFOLIOS_FILE) or []
-    portfolios.append({
-        "user_id": user_id,
-        "wallets": {}
-    })
+    portfolios.append({"user_id": user_id, "wallets": {}})
     _save_json(PORTFOLIOS_FILE, portfolios)
 
     return {"user_id": user_id, "username": username}
@@ -108,12 +121,8 @@ def login_user(username: str, password: str) -> dict:
     if not user.verify_password(password):
         raise ValueError("Неверный пароль")
 
-    current_user = {
-        "user_id": user.user_id,
-        "username": user.username
-    }
+    current_user = {"user_id": user.user_id, "username": user.username}
     _save_json(CURRENT_USER_FILE, current_user)
-
     return current_user
 
 
@@ -125,35 +134,24 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
     current_user = _get_current_user()
     user_id = current_user["user_id"]
 
-    if not currency or not isinstance(currency, str):
-        raise ValueError("Некорректный код валюты")
+    currency = _validate_currency(currency)
+    base_currency = _validate_currency(base_currency)
 
     if not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
 
-    currency = currency.upper()
-    base_currency = base_currency.upper()
-
     rate = _get_rate(currency, base_currency)
 
-    # 🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ
-    portfolios = _load_json(PORTFOLIOS_FILE) or []
-
-    portfolio = next(
-        (p for p in portfolios if p["user_id"] == user_id),
-        None
-    )
-    if not portfolio:
-        raise RuntimeError("Портфель пользователя не найден")
-
+    portfolio, portfolios = _get_user_portfolio(user_id)
     wallets = portfolio.setdefault("wallets", {})
 
     if currency not in wallets:
         wallets[currency] = {"balance": 0.0}
 
     before = wallets[currency]["balance"]
-    after = before + float(amount)
+    after = round(before + amount, 4)
     wallets[currency]["balance"] = after
+
 
     _save_json(PORTFOLIOS_FILE, portfolios)
 
@@ -169,24 +167,63 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
 
 
 # =========================
+# sell currency
+# =========================
+
+def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
+    current_user = _get_current_user()
+    user_id = current_user["user_id"]
+
+    currency = _validate_currency(currency)
+    base_currency = _validate_currency(base_currency)
+
+    if not isinstance(amount, (int, float)) or amount <= 0:
+        raise ValueError("'amount' должен быть положительным числом")
+
+    portfolio, portfolios = _get_user_portfolio(user_id)
+    wallets = portfolio.get("wallets", {})
+
+    if currency not in wallets:
+        raise RuntimeError(
+            f"У вас нет кошелька '{currency}'. Добавьте валюту: она создаётся автоматически при первой покупке."
+        )
+
+    before = wallets[currency]["balance"]
+
+    if amount > before:
+        raise RuntimeError(
+            f"Недостаточно средств: доступно {before:.4f} {currency}, требуется {amount:.4f} {currency}"
+        )
+
+    rate = _get_rate(currency, base_currency)
+    after = round(before - amount, 4)
+    wallets[currency]["balance"] = after
+
+    _save_json(PORTFOLIOS_FILE, portfolios)
+
+    return {
+        "currency": currency,
+        "amount": amount,
+        "rate": rate,
+        "base": base_currency,
+        "before": before,
+        "after": after,
+        "proceeds": round(amount * rate, 2)
+    }
+
+
+# =========================
 # show portfolio
 # =========================
 
 def show_portfolio(base_currency: str = "USD") -> dict:
-    base_currency = base_currency.upper()
-
     current_user = _get_current_user()
     user_id = current_user["user_id"]
     username = current_user["username"]
 
-    portfolios = _load_json(PORTFOLIOS_FILE) or []
-    portfolio = next(
-        (p for p in portfolios if p["user_id"] == user_id),
-        None
-    )
-    if not portfolio:
-        raise RuntimeError("Портфель пользователя не найден")
+    base_currency = _validate_currency(base_currency)
 
+    portfolio, _ = _get_user_portfolio(user_id)
     wallets = portfolio.get("wallets", {})
 
     if not wallets:
@@ -201,14 +238,13 @@ def show_portfolio(base_currency: str = "USD") -> dict:
     total = 0.0
 
     for currency, info in wallets.items():
-        balance = info["balance"]
         rate = _get_rate(currency, base_currency)
-        value = balance * rate
+        value = info["balance"] * rate
         total += value
 
         result_wallets.append({
             "currency": currency,
-            "balance": balance,
+            "balance": info["balance"],
             "value_in_base": round(value, 2)
         })
 
