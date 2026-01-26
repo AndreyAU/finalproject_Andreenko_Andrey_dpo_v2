@@ -5,4 +5,5 @@ build/
 *.pyc
 *.pyo
 *.log
+data/current_user.json
 
