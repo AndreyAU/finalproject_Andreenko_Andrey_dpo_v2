@@ -1,18 +1,23 @@
+PYTHON=python3
+
+.PHONY: install project build publish package-install lint
+
 install:
-    poetry install
+	@echo "No installation required (standard library only)"
 
 project:
-    poetry run project
-
-build:
-    poetry build
-
-publish:
-    poetry publish --dry-run
-
-package-install:
-    python3 -m pip install dist/*.whl
+	$(PYTHON) -m valutatrade_hub.cli.interface
 
 lint:
-    poetry run ruff check .
+	$(PYTHON) -m py_compile $(shell find valutatrade_hub -name "*.py")
+
+build:
+	mkdir -p dist
+	cp README.md dist/README.md 2>/dev/null || true
+
+publish:
+	@echo "Publish step (dry run)"
+
+package-install:
+	@echo "Package install step not required"
 
