@@ -1,37 +1,37 @@
 import json
-from pathlib import Path
 from datetime import datetime, timedelta
 
 from valutatrade_hub.core.models import User
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
     ValutaTradeError,
-    CurrencyNotFoundError,
     InsufficientFundsError,
     ApiRequestError,
 )
+from valutatrade_hub.infra.settings import SettingsLoader
 
-DATA_DIR = Path("data")
-USERS_FILE = DATA_DIR / "users.json"
-PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
-CURRENT_USER_FILE = DATA_DIR / "current_user.json"
-RATES_FILE = DATA_DIR / "rates.json"
+settings = SettingsLoader()
 
-TTL_MINUTES = 5
+USERS_FILE = settings.get("USERS_FILE")
+PORTFOLIOS_FILE = settings.get("PORTFOLIOS_FILE")
+CURRENT_USER_FILE = settings.get("CURRENT_USER_FILE")
+RATES_FILE = settings.get("RATES_FILE")
+RATES_TTL_SECONDS = settings.get("RATES_TTL_SECONDS")
+DEFAULT_BASE_CURRENCY = settings.get("DEFAULT_BASE_CURRENCY")
 
 
 # =========================
 # helpers
 # =========================
 
-def _load_json(path: Path):
+def _load_json(path):
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _save_json(path: Path, data):
+def _save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
@@ -45,7 +45,7 @@ def _get_current_user():
 
 def _is_fresh(ts: str) -> bool:
     updated = datetime.fromisoformat(ts)
-    return datetime.now() - updated <= timedelta(minutes=TTL_MINUTES)
+    return datetime.now() - updated <= timedelta(seconds=RATES_TTL_SECONDS)
 
 
 def _load_rates():
@@ -55,7 +55,7 @@ def _load_rates():
     return data
 
 
-# ====== Parser Service STUB (по ТЗ) ======
+# ====== Parser Service STUB ======
 
 def _parser_stub(from_currency: str, to_currency: str):
     STUB = {
@@ -186,11 +186,13 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
 # buy / sell
 # =========================
 
-def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
+def buy_currency(currency: str, amount: float, base_currency: str = None) -> dict:
     user_id = _get_current_user()["user_id"]
 
     if not isinstance(amount, (int, float)) or amount <= 0:
         raise ValutaTradeError("'amount' должен быть положительным числом")
+
+    base_currency = base_currency or DEFAULT_BASE_CURRENCY
 
     cur = get_currency(currency)
     base = get_currency(base_currency)
@@ -217,11 +219,13 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
     }
 
 
-def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
+def sell_currency(currency: str, amount: float, base_currency: str = None) -> dict:
     user_id = _get_current_user()["user_id"]
 
     if not isinstance(amount, (int, float)) or amount <= 0:
         raise ValutaTradeError("'amount' должен быть положительным числом")
+
+    base_currency = base_currency or DEFAULT_BASE_CURRENCY
 
     cur = get_currency(currency)
     base = get_currency(base_currency)
@@ -261,10 +265,11 @@ def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> d
 # show portfolio
 # =========================
 
-def show_portfolio(base_currency: str = "USD") -> dict:
+def show_portfolio(base_currency: str = None) -> dict:
     user = _get_current_user()
     user_id = user["user_id"]
 
+    base_currency = base_currency or DEFAULT_BASE_CURRENCY
     base = get_currency(base_currency)
 
     portfolio, _ = _get_user_portfolio(user_id)
