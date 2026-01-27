@@ -13,25 +13,55 @@ from typing import Dict
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
 
 
+# -------------------------
+# Вспомогательные проверки
+# -------------------------
+
+def _validate_code(code: str) -> str:
+    """
+    Проверка и нормализация кода валюты.
+    Инварианты:
+    - строка
+    - верхний регистр
+    - длина 2–5
+    - без пробелов
+    """
+    if not isinstance(code, str):
+        raise ValueError
+
+    normalized = code.strip().upper()
+
+    if (
+        not normalized
+        or " " in normalized
+        or not (2 <= len(normalized) <= 5)
+        or normalized != normalized.upper()
+    ):
+        raise ValueError
+
+    return normalized
+
+
+def _validate_non_empty_str(value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError
+
+
+# -------------------------
+# Базовый класс
+# -------------------------
+
 class Currency(ABC):
     """
     Абстрактная базовая валюта.
     """
 
     def __init__(self, name: str, code: str):
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Currency name must be a non-empty string")
-
-        if (
-            not isinstance(code, str)
-            or not code.isupper()
-            or not (2 <= len(code) <= 5)
-            or " " in code
-        ):
-            raise ValueError("Currency code must be uppercase, 2–5 chars, no spaces")
+        _validate_non_empty_str(name)
+        normalized_code = _validate_code(code)
 
         self.name: str = name
-        self.code: str = code
+        self.code: str = normalized_code
 
     @abstractmethod
     def get_display_info(self) -> str:
@@ -41,23 +71,23 @@ class Currency(ABC):
         raise NotImplementedError
 
 
+# -------------------------
+# Наследники
+# -------------------------
+
 class FiatCurrency(Currency):
     """
     Фиатная валюта.
     """
 
     def __init__(self, name: str, code: str, issuing_country: str):
-        if not isinstance(issuing_country, str) or not issuing_country.strip():
-            raise ValueError("Issuing country must be a non-empty string")
-
+        _validate_non_empty_str(issuing_country)
         super().__init__(name=name, code=code)
+
         self.issuing_country: str = issuing_country
 
     def get_display_info(self) -> str:
-        return (
-            f"[FIAT] {self.code} — {self.name} "
-            f"(Issuing: {self.issuing_country})"
-        )
+        return f"[FIAT] {self.code} — {self.name} (Issuing: {self.issuing_country})"
 
 
 class CryptoCurrency(Currency):
@@ -66,13 +96,12 @@ class CryptoCurrency(Currency):
     """
 
     def __init__(self, name: str, code: str, algorithm: str, market_cap: float):
-        if not isinstance(algorithm, str) or not algorithm.strip():
-            raise ValueError("Algorithm must be a non-empty string")
-
-        if not isinstance(market_cap, (int, float)) or market_cap <= 0:
-            raise ValueError("Market cap must be a positive number")
+        _validate_non_empty_str(algorithm)
+        if not isinstance(market_cap, (int, float)):
+            raise ValueError
 
         super().__init__(name=name, code=code)
+
         self.algorithm: str = algorithm
         self.market_cap: float = float(market_cap)
 
@@ -83,7 +112,9 @@ class CryptoCurrency(Currency):
         )
 
 
-# --- Currency registry ---
+# -------------------------
+# Реестр валют
+# -------------------------
 
 _CURRENCY_REGISTRY: Dict[str, Currency] = {
     "USD": FiatCurrency(
@@ -116,12 +147,12 @@ def get_currency(code: str) -> Currency:
     Фабричный метод получения валюты по коду.
 
     :param code: валютный код (например, USD, BTC)
-    :raises CurrencyNotFoundError: если код неизвестен
+    :raises CurrencyNotFoundError: если код неизвестен или некорректен
     """
-    if not isinstance(code, str):
+    try:
+        normalized_code = _validate_code(code)
+    except Exception:
         raise CurrencyNotFoundError(code)
-
-    normalized_code = code.upper()
 
     currency = _CURRENCY_REGISTRY.get(normalized_code)
     if currency is None:
