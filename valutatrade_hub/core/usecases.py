@@ -3,6 +3,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from valutatrade_hub.core.models import User
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import CurrencyNotFoundError, ApiRequestError
 
 DATA_DIR = Path("data")
 USERS_FILE = DATA_DIR / "users.json"
@@ -144,27 +146,27 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
-# get-rate (СТРОГО ПО ТЗ)
+# get-rate (ИЗМЕНЁН)
 # =========================
 
 def get_rate(from_currency: str, to_currency: str) -> dict:
-    from_currency = _validate_currency(from_currency)
-    to_currency = _validate_currency(to_currency)
+    from_cur = get_currency(from_currency)
+    to_cur = get_currency(to_currency)
+
+    from_code = from_cur.code
+    to_code = to_cur.code
 
     rates = _load_rates()
-    key = f"{from_currency}_{to_currency}"
+    key = f"{from_code}_{to_code}"
 
-    # 1. Свежий кеш
     if key in rates and _is_fresh(rates[key]["updated_at"]):
         rate = rates[key]["rate"]
         updated = rates[key]["updated_at"]
-
-    # 2. Устарел или отсутствует → Parser Service (заглушка)
     else:
-        stub = _parser_stub(from_currency, to_currency)
+        stub = _parser_stub(from_code, to_code)
         if not stub:
-            raise RuntimeError(
-                f"Курс {from_currency}→{to_currency} недоступен. Повторите попытку позже."
+            raise ApiRequestError(
+                f"Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
             )
 
         rates[key] = stub
@@ -174,12 +176,12 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
         rate = stub["rate"]
         updated = stub["updated_at"]
 
-    reverse_key = f"{to_currency}_{from_currency}"
+    reverse_key = f"{to_code}_{from_code}"
     reverse_rate = rates[reverse_key]["rate"] if reverse_key in rates else None
 
     return {
-        "from": from_currency,
-        "to": to_currency,
+        "from": from_code,
+        "to": to_code,
         "rate": rate,
         "reverse_rate": reverse_rate,
         "updated_at": updated
