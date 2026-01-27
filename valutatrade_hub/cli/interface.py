@@ -10,6 +10,12 @@ from valutatrade_hub.core.usecases import (
     CURRENT_USER_FILE,
     _get_current_user
 )
+from valutatrade_hub.core.exceptions import (
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+    ApiRequestError,
+    ValutaTradeError,
+)
 
 # сброс сессии при старте
 if Path(CURRENT_USER_FILE).exists():
@@ -29,13 +35,13 @@ def print_menu():
     print("---------------------------------")
 
 
-def _require_login():
+def _require_login() -> bool:
     try:
         _get_current_user()
-    except Exception as e:
+        return True
+    except ValutaTradeError as e:
         print(f"\nОшибка: {e}")
         return False
-    return True
 
 
 def handle_register():
@@ -45,7 +51,7 @@ def handle_register():
     try:
         user = register_user(username, password)
         print(f"\nПользователь '{user['username']}' зарегистрирован (id={user['user_id']})")
-    except Exception as e:
+    except ValutaTradeError as e:
         print(f"\nОшибка регистрации: {e}")
 
 
@@ -56,7 +62,7 @@ def handle_login():
     try:
         user = login_user(username, password)
         print(f"\nВы вошли как '{user['username']}'")
-    except Exception as e:
+    except ValutaTradeError as e:
         print(f"\nОшибка входа: {e}")
 
 
@@ -79,7 +85,11 @@ def handle_show_portfolio():
 
         print("---------------------------------")
         print(f"ИТОГО: {r['total']:.2f} {r['base']}")
-    except Exception as e:
+    except CurrencyNotFoundError as e:
+        print(f"\nОшибка: {e}")
+    except ApiRequestError as e:
+        print(f"\n{e}")
+    except ValutaTradeError as e:
         print(f"\nОшибка: {e}")
 
 
@@ -88,10 +98,10 @@ def handle_buy():
         return
 
     currency = input("Код валюты (например BTC): ").strip()
-    amount = input("Количество: ").strip()
+    amount_raw = input("Количество: ").strip()
 
     try:
-        amount = float(amount)
+        amount = float(amount_raw)
         r = buy_currency(currency, amount)
         print(
             f"\nПокупка выполнена: {r['amount']:.4f} {r['currency']} "
@@ -101,7 +111,11 @@ def handle_buy():
         print(f"Оценочная стоимость покупки: {r['cost']:.2f} {r['base']}")
     except ValueError:
         print("\nОшибка: 'amount' должен быть числом")
-    except Exception as e:
+    except CurrencyNotFoundError as e:
+        print(f"\nОшибка покупки: {e}")
+    except ApiRequestError as e:
+        print(f"\n{e}")
+    except ValutaTradeError as e:
         print(f"\nОшибка покупки: {e}")
 
 
@@ -110,10 +124,10 @@ def handle_sell():
         return
 
     currency = input("Код валюты (например BTC): ").strip()
-    amount = input("Количество: ").strip()
+    amount_raw = input("Количество: ").strip()
 
     try:
-        amount = float(amount)
+        amount = float(amount_raw)
         r = sell_currency(currency, amount)
         print(
             f"\nПродажа выполнена: {r['amount']:.4f} {r['currency']} "
@@ -123,7 +137,14 @@ def handle_sell():
         print(f"Оценочная выручка: {r['proceeds']:.2f} {r['base']}")
     except ValueError:
         print("\nОшибка: 'amount' должен быть числом")
-    except Exception as e:
+    except CurrencyNotFoundError as e:
+        print(f"\nОшибка продажи: {e}")
+    except InsufficientFundsError as e:
+        print(f"\nОшибка продажи: {e}")
+    except ApiRequestError as e:
+        print(f"\n{e}")
+    except ValutaTradeError as e:
+        # сюда попадает случай: валюта поддерживается, но отсутствует в портфеле
         print(f"\nОшибка продажи: {e}")
 
 
@@ -138,8 +159,13 @@ def handle_get_rate():
             f"\nКурс {r['from']}→{r['to']}: {r['rate']} "
             f"(обновлено: {r['updated_at']})"
         )
-        print(f"Обратный курс {r['to']}→{r['from']}: {r['reverse_rate']}")
-    except Exception as e:
+        if r["reverse_rate"] is not None:
+            print(f"Обратный курс {r['to']}→{r['from']}: {r['reverse_rate']}")
+    except CurrencyNotFoundError as e:
+        print(f"\nОшибка: {e}")
+    except ApiRequestError as e:
+        print(f"\n{e}")
+    except ValutaTradeError as e:
         print(f"\nОшибка: {e}")
 
 

@@ -4,7 +4,12 @@ from datetime import datetime, timedelta
 
 from valutatrade_hub.core.models import User
 from valutatrade_hub.core.currencies import get_currency
-from valutatrade_hub.core.exceptions import CurrencyNotFoundError, ApiRequestError
+from valutatrade_hub.core.exceptions import (
+    ValutaTradeError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+    ApiRequestError,
+)
 
 DATA_DIR = Path("data")
 USERS_FILE = DATA_DIR / "users.json"
@@ -34,17 +39,8 @@ def _save_json(path: Path, data):
 def _get_current_user():
     data = _load_json(CURRENT_USER_FILE)
     if not data:
-        raise RuntimeError("Сначала выполните login")
+        raise ValutaTradeError("Сначала выполните login")
     return data
-
-
-def _validate_currency(code: str) -> str:
-    if not code or not isinstance(code, str):
-        raise ValueError("Некорректный код валюты")
-    code = code.strip().upper()
-    if not code.isascii() or not code.isalpha():
-        raise ValueError("Некорректный код валюты")
-    return code
 
 
 def _is_fresh(ts: str) -> bool:
@@ -55,7 +51,7 @@ def _is_fresh(ts: str) -> bool:
 def _load_rates():
     data = _load_json(RATES_FILE)
     if not data:
-        raise RuntimeError("Курсы валют недоступны")
+        raise ApiRequestError("данные курсов недоступны")
     return data
 
 
@@ -83,7 +79,7 @@ def _get_user_portfolio(user_id: int):
     for p in portfolios:
         if p["user_id"] == user_id:
             return p, portfolios
-    raise RuntimeError("Портфель пользователя не найден")
+    raise ValutaTradeError("Портфель пользователя не найден")
 
 
 # =========================
@@ -92,14 +88,14 @@ def _get_user_portfolio(user_id: int):
 
 def register_user(username: str, password: str) -> dict:
     if not username or not username.strip():
-        raise ValueError("Имя пользователя не может быть пустым")
+        raise ValutaTradeError("Имя пользователя не может быть пустым")
     if not isinstance(password, str) or len(password) < 4:
-        raise ValueError("Пароль должен быть не короче 4 символов")
+        raise ValutaTradeError("Пароль должен быть не короче 4 символов")
 
     users = _load_json(USERS_FILE) or []
 
     if any(u["username"] == username for u in users):
-        raise ValueError(f"Имя пользователя '{username}' уже занято")
+        raise ValutaTradeError(f"Имя пользователя '{username}' уже занято")
 
     user_id = max((u["user_id"] for u in users), default=0) + 1
     salt = User.generate_salt()
@@ -127,7 +123,7 @@ def login_user(username: str, password: str) -> dict:
     user_data = next((u for u in users if u["username"] == username), None)
 
     if not user_data:
-        raise ValueError(f"Пользователь '{username}' не найден")
+        raise ValutaTradeError(f"Пользователь '{username}' не найден")
 
     user = User(
         user_id=user_data["user_id"],
@@ -138,7 +134,7 @@ def login_user(username: str, password: str) -> dict:
     )
 
     if not user.verify_password(password):
-        raise ValueError("Неверный пароль")
+        raise ValutaTradeError("Неверный пароль")
 
     current_user = {"user_id": user.user_id, "username": user.username}
     _save_json(CURRENT_USER_FILE, current_user)
@@ -146,7 +142,7 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
-# get-rate (ИЗМЕНЁН)
+# get-rate
 # =========================
 
 def get_rate(from_currency: str, to_currency: str) -> dict:
@@ -165,9 +161,7 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
     else:
         stub = _parser_stub(from_code, to_code)
         if not stub:
-            raise ApiRequestError(
-                f"Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
-            )
+            raise ApiRequestError(f"курс {from_code}→{to_code} недоступен")
 
         rates[key] = stub
         rates["last_refresh"] = stub["updated_at"]
@@ -195,28 +189,28 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
 def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
     user_id = _get_current_user()["user_id"]
 
-    currency = _validate_currency(currency)
-    base_currency = _validate_currency(base_currency)
-
     if not isinstance(amount, (int, float)) or amount <= 0:
-        raise ValueError("'amount' должен быть положительным числом")
+        raise ValutaTradeError("'amount' должен быть положительным числом")
 
-    rate = get_rate(currency, base_currency)["rate"]
+    cur = get_currency(currency)
+    base = get_currency(base_currency)
+
+    rate = get_rate(cur.code, base.code)["rate"]
 
     portfolio, portfolios = _get_user_portfolio(user_id)
     wallets = portfolio.setdefault("wallets", {})
 
-    before = wallets.get(currency, {}).get("balance", 0.0)
+    before = wallets.get(cur.code, {}).get("balance", 0.0)
     after = round(before + amount, 4)
-    wallets[currency] = {"balance": after}
+    wallets[cur.code] = {"balance": after}
 
     _save_json(PORTFOLIOS_FILE, portfolios)
 
     return {
-        "currency": currency,
+        "currency": cur.code,
         "amount": amount,
         "rate": rate,
-        "base": base_currency,
+        "base": base.code,
         "before": before,
         "after": after,
         "cost": round(amount * rate, 2)
@@ -226,35 +220,37 @@ def buy_currency(currency: str, amount: float, base_currency: str = "USD") -> di
 def sell_currency(currency: str, amount: float, base_currency: str = "USD") -> dict:
     user_id = _get_current_user()["user_id"]
 
-    currency = _validate_currency(currency)
-    base_currency = _validate_currency(base_currency)
-
     if not isinstance(amount, (int, float)) or amount <= 0:
-        raise ValueError("'amount' должен быть положительным числом")
+        raise ValutaTradeError("'amount' должен быть положительным числом")
+
+    cur = get_currency(currency)
+    base = get_currency(base_currency)
 
     portfolio, portfolios = _get_user_portfolio(user_id)
     wallets = portfolio.get("wallets", {})
 
-    if currency not in wallets:
-        raise RuntimeError(f"У вас нет кошелька '{currency}'")
+    if cur.code not in wallets:
+        raise ValutaTradeError(f"У вас нет кошелька '{cur.code}'")
 
-    before = wallets[currency]["balance"]
+    before = wallets[cur.code]["balance"]
     if amount > before:
-        raise RuntimeError(
-            f"Недостаточно средств: доступно {before:.4f} {currency}, требуется {amount:.4f} {currency}"
+        raise InsufficientFundsError(
+            available=round(before, 4),
+            required=round(amount, 4),
+            code=cur.code
         )
 
-    rate = get_rate(currency, base_currency)["rate"]
+    rate = get_rate(cur.code, base.code)["rate"]
     after = round(before - amount, 4)
-    wallets[currency]["balance"] = after
+    wallets[cur.code]["balance"] = after
 
     _save_json(PORTFOLIOS_FILE, portfolios)
 
     return {
-        "currency": currency,
+        "currency": cur.code,
         "amount": amount,
         "rate": rate,
-        "base": base_currency,
+        "base": base.code,
         "before": before,
         "after": after,
         "proceeds": round(amount * rate, 2)
@@ -269,7 +265,7 @@ def show_portfolio(base_currency: str = "USD") -> dict:
     user = _get_current_user()
     user_id = user["user_id"]
 
-    base_currency = _validate_currency(base_currency)
+    base = get_currency(base_currency)
 
     portfolio, _ = _get_user_portfolio(user_id)
     wallets = portfolio.get("wallets", {})
@@ -277,21 +273,21 @@ def show_portfolio(base_currency: str = "USD") -> dict:
     result = []
     total = 0.0
 
-    for currency, info in wallets.items():
+    for code, info in wallets.items():
         balance = info["balance"]
-        rate = get_rate(currency, base_currency)["rate"]
+        rate = get_rate(code, base.code)["rate"]
         value = round(balance * rate, 2)
         total += value
 
         result.append({
-            "currency": currency,
+            "currency": code,
             "balance": balance,
             "value_in_base": value
         })
 
     return {
         "username": user["username"],
-        "base": base_currency,
+        "base": base.code,
         "wallets": result,
         "total": round(total, 2)
     }
