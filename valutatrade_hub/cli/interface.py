@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from valutatrade_hub.logging_config import setup_logging
+
 from valutatrade_hub.core.usecases import (
     register_user,
     login_user,
@@ -16,6 +18,9 @@ from valutatrade_hub.core.exceptions import (
     ApiRequestError,
     ValutaTradeError,
 )
+
+# инициализация логирования (ОДИН РАЗ при старте CLI)
+setup_logging()
 
 # сброс сессии при старте
 if Path(CURRENT_USER_FILE).exists():
@@ -144,7 +149,6 @@ def handle_sell():
     except ApiRequestError as e:
         print(f"\n{e}")
     except ValutaTradeError as e:
-        # сюда попадает случай: валюта поддерживается, но отсутствует в портфеле
         print(f"\nОшибка продажи: {e}")
 
 

@@ -9,6 +9,7 @@ from valutatrade_hub.core.exceptions import (
     ApiRequestError,
 )
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.decorators import log_action
 
 settings = SettingsLoader()
 
@@ -49,9 +50,13 @@ def _is_fresh(ts: str) -> bool:
 
 
 def _load_rates():
+    """
+    rates.json может быть пустым.
+    В этом случае используем STUB и записываем курс при первом запросе.
+    """
     data = _load_json(RATES_FILE)
-    if not data:
-        raise ApiRequestError("данные курсов недоступны")
+    if data is None:
+        return {}
     return data
 
 
@@ -186,6 +191,7 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
 # buy / sell
 # =========================
 
+@log_action("BUY", verbose=True)
 def buy_currency(currency: str, amount: float, base_currency: str = None) -> dict:
     user_id = _get_current_user()["user_id"]
 
@@ -209,6 +215,7 @@ def buy_currency(currency: str, amount: float, base_currency: str = None) -> dic
     _save_json(PORTFOLIOS_FILE, portfolios)
 
     return {
+        "user_id": user_id,
         "currency": cur.code,
         "amount": amount,
         "rate": rate,
@@ -219,6 +226,7 @@ def buy_currency(currency: str, amount: float, base_currency: str = None) -> dic
     }
 
 
+@log_action("SELL", verbose=True)
 def sell_currency(currency: str, amount: float, base_currency: str = None) -> dict:
     user_id = _get_current_user()["user_id"]
 
@@ -251,6 +259,7 @@ def sell_currency(currency: str, amount: float, base_currency: str = None) -> di
     _save_json(PORTFOLIOS_FILE, portfolios)
 
     return {
+        "user_id": user_id,
         "currency": cur.code,
         "amount": amount,
         "rate": rate,
