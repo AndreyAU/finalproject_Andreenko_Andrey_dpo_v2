@@ -153,7 +153,7 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
-# get-rate (3.5)
+# get-rate (3.5) — FIXED
 # =========================
 
 def get_rate(from_currency: str, to_currency: str) -> dict:
@@ -161,24 +161,55 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
     to_cur = get_currency(to_currency)
 
     rates = _load_rates()
-    key = f"{from_cur.code}_{to_cur.code}"
-
-    if key in rates and _is_fresh(rates[key]["updated_at"]):
-        rate = rates[key]["rate"]
-        updated = rates[key]["updated_at"]
-    else:
-        stub = _parser_stub(from_cur.code, to_cur.code)
-        if not stub:
-            raise ApiRequestError(f"курс {from_cur.code}→{to_cur.code} недоступен")
-
-        rates[key] = stub
-        rates["last_refresh"] = stub["updated_at"]
-        _save_json(RATES_FILE, rates)
-
-        rate = stub["rate"]
-        updated = stub["updated_at"]
-
+    direct_key = f"{from_cur.code}_{to_cur.code}"
     reverse_key = f"{to_cur.code}_{from_cur.code}"
+
+    # 1) Прямой курс в кэше и свежий
+    if direct_key in rates and _is_fresh(rates[direct_key]["updated_at"]):
+        rate = rates[direct_key]["rate"]
+        updated = rates[direct_key]["updated_at"]
+
+    else:
+        # 2) Пробуем STUB для прямого курса
+        stub = _parser_stub(from_cur.code, to_cur.code)
+        if stub:
+            rates[direct_key] = stub
+            rates["last_refresh"] = stub["updated_at"]
+            _save_json(RATES_FILE, rates)
+            rate = stub["rate"]
+            updated = stub["updated_at"]
+
+        # 3) Пробуем обратный курс (из кэша или STUB)
+        elif reverse_key in rates and _is_fresh(rates[reverse_key]["updated_at"]):
+            reverse_rate = rates[reverse_key]["rate"]
+            rate = round(1 / reverse_rate, 8)
+            updated = rates[reverse_key]["updated_at"]
+
+            rates[direct_key] = {
+                "rate": rate,
+                "updated_at": updated,
+            }
+            _save_json(RATES_FILE, rates)
+
+        else:
+            reverse_stub = _parser_stub(to_cur.code, from_cur.code)
+            if not reverse_stub:
+                raise ApiRequestError(
+                    f"курс {from_cur.code}→{to_cur.code} недоступен"
+                )
+
+            reverse_rate = reverse_stub["rate"]
+            rate = round(1 / reverse_rate, 8)
+            updated = reverse_stub["updated_at"]
+
+            rates[reverse_key] = reverse_stub
+            rates[direct_key] = {
+                "rate": rate,
+                "updated_at": updated,
+            }
+            rates["last_refresh"] = updated
+            _save_json(RATES_FILE, rates)
+
     reverse_rate = rates.get(reverse_key, {}).get("rate")
 
     return {
