@@ -19,27 +19,24 @@ from valutatrade_hub.core.exceptions import CurrencyNotFoundError
 
 def _validate_code(code: str) -> str:
     """
-    Проверка и нормализация кода валюты.
+    Проверка кода валюты.
+
     Инварианты:
     - строка
+    - 2–5 символов
     - верхний регистр
-    - длина 2–5
     - без пробелов
     """
     if not isinstance(code, str):
         raise ValueError
 
-    normalized = code.strip().upper()
-
-    if (
-        not normalized
-        or " " in normalized
-        or not (2 <= len(normalized) <= 5)
-        or normalized != normalized.upper()
-    ):
+    if not code or " " in code or not (2 <= len(code) <= 5):
         raise ValueError
 
-    return normalized
+    if code != code.upper():
+        raise ValueError
+
+    return code
 
 
 def _validate_non_empty_str(value: str) -> None:
@@ -58,10 +55,10 @@ class Currency(ABC):
 
     def __init__(self, name: str, code: str):
         _validate_non_empty_str(name)
-        normalized_code = _validate_code(code)
+        validated_code = _validate_code(code)
 
         self.name: str = name
-        self.code: str = normalized_code
+        self.code: str = validated_code
 
     @abstractmethod
     def get_display_info(self) -> str:
@@ -150,13 +147,13 @@ def get_currency(code: str) -> Currency:
     :raises CurrencyNotFoundError: если код неизвестен или некорректен
     """
     try:
-        normalized_code = _validate_code(code)
+        validated_code = _validate_code(code)
     except Exception:
         raise CurrencyNotFoundError(code)
 
-    currency = _CURRENCY_REGISTRY.get(normalized_code)
+    currency = _CURRENCY_REGISTRY.get(validated_code)
     if currency is None:
-        raise CurrencyNotFoundError(normalized_code)
+        raise CurrencyNotFoundError(validated_code)
 
     return currency
 
