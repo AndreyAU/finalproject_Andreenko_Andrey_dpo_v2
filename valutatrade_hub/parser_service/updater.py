@@ -1,3 +1,4 @@
+# valutatrade_hub/parser_service/updater.py
 import logging
 from datetime import datetime
 
@@ -9,65 +10,50 @@ logger = logging.getLogger("valutatrade")
 
 
 class RatesUpdater:
-    """
-    Координатор обновления курсов валют.
-
-    Отвечает за:
-    - вызов всех API-клиентов
-    - объединение полученных курсов
-    - передачу данных в storage
-    - логирование процесса
-
-    Не содержит бизнес-логики (TTL, reverse-rate и т.п.).
-    """
-
     def __init__(self, clients: list[BaseApiClient], storage) -> None:
         self.clients = clients
         self.storage = storage
 
-    def run_update(self) -> int:
+    def run_update(self) -> dict:
         logger.info("Starting rates update")
 
         all_rates: dict[str, float] = {}
-        updated_sources: list[str] = []
+        sources_ok: list[str] = []
+        errors: list[str] = []
 
         for client in self.clients:
-            client_name = client.__class__.__name__
+            name = client.__class__.__name__
 
             try:
                 rates = client.fetch_rates()
-
                 if not rates:
-                    logger.warning(
-                        f"{client_name}: no rates returned"
-                    )
+                    logger.warning(f"{name}: no rates returned")
                     continue
 
                 all_rates.update(rates)
-                updated_sources.append(client_name)
+                sources_ok.append(name)
 
-                logger.info(
-                    f"{client_name}: fetched {len(rates)} rates"
-                )
+                logger.info(f"{name}: fetched {len(rates)} rates")
 
             except ApiRequestError as e:
-                logger.error(
-                    f"{client_name}: failed to fetch rates: {e}"
-                )
-                continue
+                msg = f"{name}: {e}"
+                errors.append(msg)
+                logger.error(msg)
 
             except Exception as e:
-                # защита от неожиданных ошибок
-                logger.exception(
-                    f"{client_name}: unexpected error: {e}"
-                )
-                continue
+                msg = f"{name}: unexpected error: {e}"
+                errors.append(msg)
+                logger.exception(msg)
 
         if not all_rates:
             logger.warning("No rates collected from any source")
-            return 0
+            return {
+                "count": 0,
+                "last_refresh": None,
+                "sources": sources_ok,
+                "errors": errors,
+            }
 
-        # фиксируем момент обновления
         refreshed_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
         self.storage.save_snapshot(
@@ -76,9 +62,13 @@ class RatesUpdater:
         )
 
         logger.info(
-            f"Rates update finished: {len(all_rates)} pairs, "
-            f"sources={updated_sources}"
+            f"Rates update finished: {len(all_rates)} pairs, sources={sources_ok}"
         )
 
-        return len(all_rates)
+        return {
+            "count": len(all_rates),
+            "last_refresh": refreshed_at,
+            "sources": sources_ok,
+            "errors": errors,
+        }
 

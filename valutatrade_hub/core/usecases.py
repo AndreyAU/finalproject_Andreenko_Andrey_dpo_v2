@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta
 
 from valutatrade_hub.core.models import User
@@ -34,8 +35,16 @@ DEFAULT_BASE_CURRENCY = settings.get("DEFAULT_BASE_CURRENCY")
 def _load_json(path):
     if not path.exists():
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+
+    # защита от пустого файла
+    if path.stat().st_size == 0:
+        return None
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return None
 
 
 def _save_json(path, data):
@@ -153,7 +162,7 @@ def login_user(username: str, password: str) -> dict:
 
 
 # =========================
-# get-rate (3.5) — FIXED
+# get-rate (3.5)
 # =========================
 
 def get_rate(from_currency: str, to_currency: str) -> dict:
@@ -164,13 +173,11 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
     direct_key = f"{from_cur.code}_{to_cur.code}"
     reverse_key = f"{to_cur.code}_{from_cur.code}"
 
-    # 1) Прямой курс в кэше и свежий
     if direct_key in rates and _is_fresh(rates[direct_key]["updated_at"]):
         rate = rates[direct_key]["rate"]
         updated = rates[direct_key]["updated_at"]
 
     else:
-        # 2) Пробуем STUB для прямого курса
         stub = _parser_stub(from_cur.code, to_cur.code)
         if stub:
             rates[direct_key] = stub
@@ -179,7 +186,6 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
             rate = stub["rate"]
             updated = stub["updated_at"]
 
-        # 3) Пробуем обратный курс (из кэша или STUB)
         elif reverse_key in rates and _is_fresh(rates[reverse_key]["updated_at"]):
             reverse_rate = rates[reverse_key]["rate"]
             rate = round(1 / reverse_rate, 8)

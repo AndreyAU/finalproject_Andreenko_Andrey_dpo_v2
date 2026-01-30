@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from valutatrade_hub.logging_config import setup_logging
@@ -10,7 +11,7 @@ from valutatrade_hub.core.usecases import (
     sell_currency,
     get_rate,
     CURRENT_USER_FILE,
-    _get_current_user
+    _get_current_user,
 )
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
@@ -18,6 +19,15 @@ from valutatrade_hub.core.exceptions import (
     ApiRequestError,
     ValutaTradeError,
 )
+
+from valutatrade_hub.parser_service.config import ParserConfig
+from valutatrade_hub.parser_service.storage import RatesStorage
+from valutatrade_hub.parser_service.api_clients import (
+    CoinGeckoClient,
+    ExchangeRateApiClient,
+)
+from valutatrade_hub.parser_service.updater import RatesUpdater
+
 
 # инициализация логирования (ОДИН РАЗ при старте CLI)
 setup_logging()
@@ -36,6 +46,8 @@ def print_menu():
     print("4. Купить валюту")
     print("5. Продать валюту")
     print("6. Получить курс валют")
+    print("7. Обновить курсы валют (update-rates)")
+    print("8. Показать курсы из кеша (show-rates)")
     print("0. Выход")
     print("---------------------------------")
 
@@ -55,7 +67,10 @@ def handle_register():
 
     try:
         user = register_user(username, password)
-        print(f"\n✅ Пользователь '{user['username']}' зарегистрирован (id={user['user_id']})")
+        print(
+            f"\n✅ Пользователь '{user['username']}' "
+            f"зарегистрирован (id={user['user_id']})"
+        )
     except ValutaTradeError as e:
         print(f"\n❌ Ошибка регистрации: {e}")
 
@@ -113,7 +128,7 @@ def handle_buy():
         amount = float(amount_raw)
         r = buy_currency(currency, amount)
 
-        print(f"\n✅ Покупка выполнена")
+        print("\n✅ Покупка выполнена")
         print(
             f"- Куплено: {r['amount']:.4f} {r['currency']} "
             f"по курсу {r['rate']} {r['base']}/{r['currency']}"
@@ -142,7 +157,7 @@ def handle_sell():
         amount = float(amount_raw)
         r = sell_currency(currency, amount)
 
-        print(f"\n✅ Продажа выполнена")
+        print("\n✅ Продажа выполнена")
         print(
             f"- Продано: {r['amount']:.4f} {r['currency']} "
             f"по курсу {r['rate']} {r['base']}/{r['currency']}"
@@ -187,6 +202,91 @@ def handle_get_rate():
         print(f"\n❌ Ошибка: {e}")
 
 
+def handle_update_rates():
+    print("\nINFO: Starting rates update...")
+
+    config = ParserConfig()
+    storage = RatesStorage(config)
+
+    clients = [
+        CoinGeckoClient(config),
+        ExchangeRateApiClient(config),
+    ]
+
+    updater = RatesUpdater(clients=clients, storage=storage)
+    result = updater.run_update()
+
+    if result["count"] == 0:
+        print("Update completed with errors.")
+    else:
+        print(
+            f"Update successful. Total rates updated: {result['count']}. "
+            f"Last refresh: {result['last_refresh']}"
+        )
+
+    if result["errors"]:
+        print("Errors:")
+        for e in result["errors"]:
+            print(f"- {e}")
+
+
+def handle_show_rates():
+    """
+    Улучшенный show-rates с фильтрацией.
+    """
+    config = ParserConfig()
+    rates_file = Path(config.RATES_FILE_PATH)
+
+    if not rates_file.exists():
+        print("\nЛокальный кеш курсов пуст. Выполните 'update-rates'.")
+        return
+
+    data = json.loads(rates_file.read_text(encoding="utf-8"))
+    pairs = data.get("pairs", {})
+    updated_at = data.get("last_refresh")
+
+    if not pairs:
+        print("\nЛокальный кеш курсов пуст.")
+        return
+
+    currency = input("Фильтр по валюте (например BTC, Enter — все): ").strip().upper()
+    top_raw = input("TOP-N (Enter — без ограничения): ").strip()
+    base = input("Базовая валюта (по умолчанию USD): ").strip().upper() or "USD"
+
+    if base != "USD":
+        print("\n❌ Пока поддерживается только база USD (вариант A).")
+        return
+
+    filtered = []
+
+    for pair, info in pairs.items():
+        from_cur, _ = pair.split("_", 1)
+
+        if currency and from_cur != currency:
+            continue
+
+        filtered.append((pair, info))
+
+    if currency and not filtered:
+        print(f"\n❌ Курс для '{currency}' не найден в кеше.")
+        return
+
+    if top_raw:
+        try:
+            top_n = int(top_raw)
+            filtered.sort(key=lambda x: x[1]["rate"], reverse=True)
+            filtered = filtered[:top_n]
+        except ValueError:
+            print("\n❌ TOP должен быть числом.")
+            return
+    else:
+        filtered.sort(key=lambda x: x[0])
+
+    print(f"\nRates from cache (updated at {updated_at}):")
+    for pair, info in filtered:
+        print(f"- {pair}: {info['rate']}")
+
+
 def main_menu():
     while True:
         print_menu()
@@ -204,6 +304,10 @@ def main_menu():
             handle_sell()
         elif choice == "6":
             handle_get_rate()
+        elif choice == "7":
+            handle_update_rates()
+        elif choice == "8":
+            handle_show_rates()
         elif choice == "0":
             print("\nДо свидания!")
             break

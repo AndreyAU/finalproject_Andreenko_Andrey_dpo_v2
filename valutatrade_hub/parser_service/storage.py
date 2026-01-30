@@ -1,7 +1,6 @@
 import json
 import os
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +26,10 @@ class RatesStorage:
         self.rates_path = Path(self.config.RATES_FILE_PATH)
         self.history_path = Path(self.config.HISTORY_FILE_PATH)
 
-        # гарантируем, что data/ существует
+        # гарантируем, что каталог data/ существует
         self.rates_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # exchange_rates.json всегда список
+        # exchange_rates.json всегда существует и всегда список
         if not self.history_path.exists():
             self._atomic_write(self.history_path, [])
 
@@ -41,7 +40,7 @@ class RatesStorage:
     def save_snapshot(self, rates: dict[str, float], updated_at: str) -> None:
         """
         Сохраняет snapshot текущих курсов в rates.json
-        и пишет историю в exchange_rates.json.
+        и добавляет записи в exchange_rates.json (append-only).
 
         rates: {"BTC_USD": 59337.21, ...}
         updated_at: ISO-UTC timestamp
@@ -52,17 +51,19 @@ class RatesStorage:
         }
 
         for pair, rate in rates.items():
+            source = self._detect_source(pair)
+
             snapshot["pairs"][pair] = {
                 "rate": rate,
                 "updated_at": updated_at,
-                "source": self._detect_source(pair),
+                "source": source,
             }
 
             self._append_history(
                 pair=pair,
                 rate=rate,
                 timestamp=updated_at,
-                source=snapshot["pairs"][pair]["source"],
+                source=source,
             )
 
         self._atomic_write(self.rates_path, snapshot)
@@ -104,14 +105,27 @@ class RatesStorage:
     # =========================
 
     def _load_history(self) -> list[dict[str, Any]]:
+        """
+        Загружает историю курсов.
+
+        Гарантии:
+        - всегда возвращает list
+        - пустой файл → []
+        - битый формат → []
+        """
         if not self.history_path.exists():
             return []
 
-        with open(self.history_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        if self.history_path.stat().st_size == 0:
+            return []
+
+        try:
+            with open(self.history_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            return []
 
         if not isinstance(data, list):
-            # защитный механизм: история ВСЕГДА список
             return []
 
         return data
@@ -137,9 +151,8 @@ class RatesStorage:
     def _detect_source(self, pair: str) -> str:
         """
         Определяет источник курса по валютной паре.
-        (простой и прозрачный эвристический подход)
         """
-        if pair.startswith("BTC_") or pair.startswith("ETH_") or pair.startswith("SOL_"):
+        if pair.startswith(("BTC_", "ETH_", "SOL_")):
             return "CoinGecko"
         return "ExchangeRate-API"
 

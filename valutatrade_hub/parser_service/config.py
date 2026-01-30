@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -7,7 +7,7 @@ class ParserConfig:
     """
     Конфигурация Parser Service.
 
-    Содержит только параметры и константы.
+    Содержит ТОЛЬКО параметры и константы.
     Не выполняет валидаций, IO или бизнес-логики.
     """
 
@@ -15,6 +15,8 @@ class ParserConfig:
     # API keys (env only)
     # =========================
 
+    # Ключ берётся ТОЛЬКО из переменной окружения
+    # В git никогда не попадает
     EXCHANGERATE_API_KEY: str | None = os.getenv("EXCHANGERATE_API_KEY")
 
     # =========================
@@ -44,16 +46,20 @@ class ParserConfig:
     )
 
     # CoinGecko использует ID, а не тикеры
-    CRYPTO_ID_MAP: dict[str, str] = {
-        "BTC": "bitcoin",
-        "ETH": "ethereum",
-        "SOL": "solana",
-    }
+    # ⚠️ dict → default_factory (обязательно для dataclass)
+    CRYPTO_ID_MAP: dict[str, str] = field(
+        default_factory=lambda: {
+            "BTC": "bitcoin",
+            "ETH": "ethereum",
+            "SOL": "solana",
+        }
+    )
 
     # =========================
     # File paths
     # =========================
 
+    # Пути — строками, без SettingsLoader
     RATES_FILE_PATH: str = "data/rates.json"
     HISTORY_FILE_PATH: str = "data/exchange_rates.json"
 
